@@ -12,7 +12,7 @@ Este proyecto implementa un **sistema de Machine Learning supervisado** para pre
 
 El pipeline experimental combina modelos de **Gradient Boosting** (XGBoost y LightGBM) con técnicas avanzadas de balanceo de clases y optimización de hiperparámetros, siguiendo rigurosamente la metodología **CRISP-DM** (*Cross-Industry Standard Process for Data Mining*).
 
-**Resultado principal:** La combinación **IHT + XGBoost** logra un **Recall del 80.97%** en la detección de inasistencias, lo que significa que el sistema identifica correctamente al 81% de los pacientes que efectivamente faltarán a su cita.
+**Resultado principal:** La combinación **REENN + LightGBM** logra un **Recall del 91.73%** en la detección de inasistencias, lo que significa que el sistema identifica correctamente a más de 9 de cada 10 pacientes que efectivamente faltarán a su cita.
 
 ---
 
@@ -99,11 +99,13 @@ Dataset (412,579 registros, 10 features)
     │
     ├── Para cada seed en [42, 123]:
     │       │
-    │       ├── train_test_split (85%/15%, stratify, seed=N)
+    │       ├── train_test_split (85%/15%, stratify, seed=N) → TRAIN / TEST
     │       │
-    │       ├── TRAIN ──► StratifiedKFold (n_splits=1)
+    │       ├── train_test_split (85%/15% de TRAIN, stratify, seed=N) → TR_VAL / TST_VAL
+    │       │
+    │       ├── TR_VAL ──► Preprocesar → Balanceo (4 técnicas)
     │       │       │
-    │       │       └── Fold 1: Preprocesar → Balanceo (4 técnicas) → Optuna (10 trials)
+    │       │       └── Optuna (12 trials, MedianPruner) en TST_VAL como validación
     │       │
     │       ├── Reentrenar con mejores params en TRAIN completo balanceado
     │       │
@@ -117,9 +119,9 @@ Dataset (412,579 registros, 10 features)
 | Componente | Configuración |
 |------------|---------------|
 | **Modelos** | XGBoost, LightGBM (API nativa, GPU CUDA) |
-| **Balanceo de clases** | SMOTETomek, SMOTEENN, NearMiss-1, Instance Hardness Threshold (IHT) |
-| **Optimización de hiperparámetros** | Optuna (TPE Sampler, 10 trials por combinación) |
-| **Métrica de optimización** | ROC-AUC |
+| **Balanceo de clases** | SMOTETomek (SMOTETK), Repeated Edited Nearest Neighbours (REENN), Neighbourhood Cleaning Rule (NC), Instance Hardness Threshold (IHT) |
+| **Optimización de hiperparámetros** | Optuna (TPE Sampler, MedianPruner, 12 trials por combinación) |
+| **Métrica de optimización** | Recall de la clase 1 (maximize), con AUC como proxy para pruning |
 | **Preprocesamiento** | MinMaxScaler (numéricas) + OrdinalEncoder (categóricas) |
 | **Semillas** | [42, 123] (2 semillas para estabilidad) |
 | **Total de datasets balanceados** | 8 (2 seeds × 4 técnicas de balanceo × 1 fold) |
@@ -128,8 +130,8 @@ Dataset (412,579 registros, 10 features)
 #### Técnicas de Balanceo Evaluadas
 
 1. **SMOTETomek (SMOTETK):** Combina oversampling sintético (SMOTE) con undersampling basado en vecinos más cercanos para limpiar la frontera de decisión.
-2. **SMOTEENN (SMOTEENN):** Combina SMOTE con Edited Nearest Neighbors para eliminar instancias ruidosas de la clase mayoritaria.
-3. **NearMiss-1 (NM-1):** Undersampling que elimina instancias de la clase mayoritaria con mayor distancia a la clase minoritaria.
+2. **Repeated Edited Nearest Neighbours (REENN):** Undersampling iterativo que elimina instancias consideradas ruidosas o mal clasificadas por sus vecinos más cercanos.
+3. **Neighbourhood Cleaning Rule (NC):** Undersampling basado en vecinos que limpia instancias de la clase mayoritaria cercanas a la frontera de decisión.
 4. **Instance Hardness Threshold (IHT):** Undersampling que elimina instancias de la clase mayoritaria con alta "dureza" de clasificación (probabilidad elevada de ser mal clasificadas), filtrando outliers y ruido (Deina et al., 2024).
 
 ---
@@ -140,14 +142,14 @@ Dataset (412,579 registros, 10 features)
 
 | Combinación | Accuracy | Precision (C1) | **Recall (C1)** | Precision (C0) | Recall (C0) | ROC AUC |
 |-------------|----------|----------------|-----------------|----------------|-------------|---------|
-| **IHT + XGB** | 0.4749 ± 0.0004 | 0.3041 ± 0.0007 | **0.8097 ± 0.0036** | 0.8451 ± 0.0022 | 0.3591 ± 0.0007 | 0.6366 ± 0.0023 |
-| **IHT + LGBM** | 0.4747 ± 0.0031 | 0.3040 ± 0.0012 | **0.8096 ± 0.0011** | 0.8449 ± 0.0009 | 0.3589 ± 0.0045 | 0.6371 ± 0.0032 |
-| NM-1 + XGB | 0.4986 ± 0.0034 | 0.2914 ± 0.0006 | 0.6641 ± 0.0060 | 0.7916 ± 0.0005 | 0.4414 ± 0.0067 | 0.5526 ± 0.0001 |
-| NM-1 + LGBM | 0.5003 ± 0.0006 | 0.2898 ± 0.0008 | 0.6509 ± 0.0025 | 0.7878 ± 0.0012 | 0.4412 ± 0.0067 | 0.5508 ± 0.0017 |
-| SMOTEENN + XGB | 0.7279 ± 0.0039 | 0.4679 ± 0.0079 | 0.4280 ± 0.0028 | 0.8316 ± 0.0042 | 0.4471 ± 0.0052 | 0.7013 ± 0.0019 |
-| SMOTEENN + LGBM | 0.7283 ± 0.0061 | 0.4686 ± 0.0122 | 0.4262 ± 0.0003 | 0.8328 ± 0.0081 | 0.4463 ± 0.0057 | 0.7000 ± 0.0038 |
-| SMOTETK + XGB | 0.7661 ± 0.0005 | 0.6053 ± 0.0039 | 0.2589 ± 0.0023 | 0.9416 ± 0.0015 | 0.3626 ± 0.0015 | 0.7130 ± 0.0013 |
-| SMOTETK + LGBM | 0.7646 ± 0.0004 | 0.6057 ± 0.0039 | 0.2412 ± 0.0035 | 0.9457 ± 0.0017 | 0.3450 ± 0.0029 | 0.7037 ± 0.0033 |
+| **REENN + LGBM** | 0.4158 ± 0.0011 | 0.2952 ± 0.0008 | **0.9173 ± 0.0029** | 0.8944 ± 0.0035 | 0.2424 ± 0.0004 | 0.6846 ± 0.0028 |
+| **REENN + XGB** | 0.4186 ± 0.0009 | 0.2961 ± 0.0003 | **0.9164 ± 0.0000** | 0.8950 ± 0.0004 | 0.2464 ± 0.0012 | 0.6877 ± 0.0035 |
+| NC + LGBM | 0.4313 ± 0.0004 | 0.2987 ± 0.0001 | 0.9002 ± 0.0006 | 0.8863 ± 0.0003 | 0.2691 ± 0.0008 | 0.6824 ± 0.0023 |
+| NC + XGB | 0.4357 ± 0.0020 | 0.3002 ± 0.0000 | 0.8985 ± 0.0059 | 0.8871 ± 0.0041 | 0.2757 ± 0.0047 | 0.6857 ± 0.0029 |
+| IHT + XGB | 0.4963 ± 0.0001 | 0.3203 ± 0.0001 | 0.8556 ± 0.0004 | 0.8817 ± 0.0003 | 0.3721 ± 0.0000 | 0.6844 ± 0.0037 |
+| IHT + LGBM | 0.4959 ± 0.0012 | 0.3193 ± 0.0007 | 0.8497 ± 0.0012 | 0.8778 ± 0.0012 | 0.3736 ± 0.0012 | 0.6875 ± 0.0013 |
+| SMOTETK + XGB | 0.7640 ± 0.0008 | 0.5862 ± 0.0051 | 0.2775 ± 0.0031 | 0.7886 ± 0.0003 | 0.9322 ± 0.0022 | 0.7094 ± 0.0005 |
+| SMOTETK + LGBM | 0.7586 ± 0.0037 | 0.5689 ± 0.0202 | 0.2523 ± 0.0051 | 0.7831 ± 0.0001 | 0.9337 ± 0.0068 | 0.6882 ± 0.0023 |
 
 > **Nota:** C1 = Clase 1 (NO VINO / inasistencia). C0 = Clase 0 (VINO / asistencia).
 
@@ -159,16 +161,16 @@ Dataset (412,579 registros, 10 features)
 
 | Modelo | Balanceo | Recall (C1) | Trade-off |
 |--------|----------|-------------|-----------|
-| **XGBoost** | **IHT** | **0.8097 ± 0.0036** | Baja accuracy (0.4749), muchas falsas alarmas |
-| **LightGBM** | **IHT** | **0.8096 ± 0.0011** | Misma situación, menor varianza entre semillas |
+| **LightGBM** | **REENN** | **0.9173 ± 0.0029** | Baja accuracy (0.4158), muchas falsas alarmas |
+| **XGBoost** | **REENN** | **0.9164 ± 0.0000** | Baja accuracy (0.4186), Recall muy estable entre semillas |
 
-Las combinaciones con **IHT** logran el mayor Recall (~0.81), detectando el **81% de las inasistencias reales**. El costo es una Accuracy baja (~0.47) y muchas falsas alarmas (Precision C1 ~0.30), lo cual es **aceptable** cuando el costo de no detectar una inasistencia supera el costo de una intervención innecesaria.
+Las combinaciones con **REENN** logran el mayor Recall (~0.917), detectando más de **9 de cada 10 inasistencias reales**. El costo es una Accuracy baja (~0.42) y muchas falsas alarmas (Precision C1 ~0.30), lo cual es **aceptable** cuando el costo de no detectar una inasistencia supera el costo de una intervención innecesaria.
 
 **Comparación con otras técnicas:**
-- **SMOTETK+XGB** obtiene la mayor Precision(C1) (0.6053) y ROC AUC (0.7130), pero su Recall(C1) es bajo (0.2589), detectando solo el 26% de inasistencias.
-- **NM-1** obtiene un Recall intermedio (~0.66) pero con una varianza mayor y un rendimiento global inferior a IHT.
+- **SMOTETK+XGB** obtiene la mayor Precision(C1) (0.5862), Accuracy (0.7640) y ROC AUC (0.7094), pero su Recall(C1) es bajo (0.2775), detectando solo el 28% de inasistencias.
+- **NC** e **IHT** obtienen un Recall alto (~0.90 y ~0.85, respectivamente), aunque inferior al de REENN.
 
-**Conclusión evaluativa:** La técnica **Instance Hardness Threshold (IHT)** es superior para este problema clínico porque filtra instancias de la clase mayoritaria con alta dureza de clasificación, permitiendo al modelo centrarse en las fronteras de decisión más relevantes para detectar inasistencias (Deina et al., 2024).
+**Conclusión evaluativa:** La técnica **Repeated Edited Nearest Neighbours (REENN)** es superior para este problema clínico porque limpia iterativamente instancias ruidosas de la clase mayoritaria, permitiendo al modelo centrarse en las fronteras de decisión más relevantes para detectar inasistencias.
 
 ---
 
@@ -176,21 +178,21 @@ Las combinaciones con **IHT** logran el mayor Recall (~0.81), detectando el **81
 
 #### Modelo Seleccionado — Ensamble para Maximizar Recall
 
-Se propone un **ensamble orientado a maximizar el Recall de la clase 1 (inasistencias)**, combinando las predicciones de ambos modelos ganadores:
+La combinación **REENN + XGB/LGBM** obtuvo el mayor Recall(C1) (~0.917), detectando el 91.7% de las inasistencias reales. Se propone un **ensamble orientado a maximizar el Recall de la clase 1 (inasistencias)**, combinando las predicciones de ambos modelos ganadores:
 
 | Modelo | Balanceo | Recall (C1) | Precision (C1) | ROC AUC |
 |--------|----------|-------------|----------------|---------|
-| XGB | IHT | **0.8097 ± 0.0036** | 0.3041 ± 0.0007 | 0.6366 ± 0.0023 |
-| LGBM | IHT | **0.8096 ± 0.0011** | 0.3040 ± 0.0012 | 0.6371 ± 0.0032 |
+| LGBM | REENN | **0.9173 ± 0.0029** | 0.2952 ± 0.0008 | 0.6846 ± 0.0028 |
+| XGB | REENN | **0.9164 ± 0.0000** | 0.2961 ± 0.0003 | 0.6877 ± 0.0035 |
 
-**Regla de decisión del ensamble:** Se promedian las probabilidades de predicción de ambos modelos (IHT+XGB e IHT+LGBM). Si la probabilidad promedio supera el umbral de 0.5, se predice inasistencia. Promediar las probabilidades suaviza las predicciones individuales y mejora la generalización.
+**Regla de decisión del ensamble:** Se promedian las probabilidades de predicción de ambos modelos (REENN+XGB y REENN+LGBM). Si la probabilidad promedio supera el umbral de 0.5, se predice inasistencia. Promediar las probabilidades suaviza las predicciones individuales y mejora la generalización.
 
 #### Arquitectura de Despliegue
 
 | Componente | Descripción |
 |------------|-------------|
-| **Servidor de Modelos** | API REST (FastAPI/Docker) con 2 modelos serializados (IHT+XGB, IHT+LGBM) |
-| **Pipeline de Predicción** | Preprocesamiento → Predicción IHT+XGB + IHT+LGBM → Promedio de probabilidades → Umbral 0.5 → Alerta |
+| **Servidor de Modelos** | API REST (FastAPI/Docker) con 2 modelos serializados (REENN+XGB, REENN+LGBM) |
+| **Pipeline de Predicción** | Preprocesamiento → Predicción REENN+XGB + REENN+LGBM → Promedio de probabilidades → Umbral 0.5 → Alerta |
 | **Base de Datos** | Historial de predicciones, resultados reales y métricas del ensamble |
 
 **Modo de operación:**
@@ -235,7 +237,7 @@ Se propone un **ensamble orientado a maximizar el Recall de la clase 1 (inasiste
 - Scikit-learn
 - XGBoost (con soporte GPU/CUDA opcional)
 - LightGBM (con soporte GPU/CUDA opcional)
-- Imbalanced-learn (SMOTETomek, SMOTEENN, NearMiss, IHT)
+- Imbalanced-learn (SMOTETomek, REENN, NC, IHT)
 - Optuna (búsqueda bayesiana de hiperparámetros)
 - Matplotlib, Seaborn (visualización)
 - SHAP (interpretabilidad de modelos)
